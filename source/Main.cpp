@@ -877,18 +877,19 @@ public:
         plugin::OpenConsole();
 #endif
 
-        if (DebugMenuLoad()) {
-            DebugMenuShowing = (bool(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuShowing");
-            DebugMenuPrintString = (void(*)(const char*, float, float, int))GetProcAddress(gDebugMenuAPI.module, "DebugMenuPrintString");
-            DebugMenuGetStringSize = (int(*)(const char*))GetProcAddress(gDebugMenuAPI.module, "DebugMenuGetStringSize");
-        }
-
         plugin::Events::initEngineEvent += []() {
             Init();
-            DebugMenuAddCmd("ClassicHud", "Reload", []() {
-                Shutdown();
-                Init();
-            });
+
+            if (DebugMenuLoad()) {
+                DebugMenuShowing = (bool(*)())GetProcAddress(gDebugMenuAPI.module, "DebugMenuShowing");
+                DebugMenuPrintString = (void(*)(const char*, float, float, int))GetProcAddress(gDebugMenuAPI.module, "DebugMenuPrintString");
+                DebugMenuGetStringSize = (int(*)(const char*))GetProcAddress(gDebugMenuAPI.module, "DebugMenuGetStringSize");
+
+                DebugMenuAddCmd("ClassicHud", "Reload", []() {
+                    Shutdown();
+                    Init();
+                });
+            }
         };
 
         plugin::Events::shutdownEngineEvent += []() {
