@@ -12,8 +12,8 @@ Enjoy
 
 ## Screenshot:
 <p align="center">
-<img src="https://github.com/gennariarmando/iv-classichud/screens/screen1.jpg" width="640" height="360">
-<img src="https://github.com/gennariarmando/iv-classichud/screens/screen2.jpg" width="640" height="360">
+<img src="https://raw.githubusercontent.com/gennariarmando/iv-classichud/refs/heads/main/screens/screen1.jpg" width="640" height="360">
+<img src="https://raw.githubusercontent.com/gennariarmando/iv-classichud/refs/heads/main/screens/screen2.jpg" width="640" height="360">
 </p>
 
 Weapon icons by RRT94
