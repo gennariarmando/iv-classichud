@@ -28,6 +28,7 @@
 #include "CCamera.h"
 #include "CUserDisplay.h"
 #include "CControlMgr.h"
+#include "audRadioStation.h"
 
 #include "SpriteLoader.h"
 
@@ -52,12 +53,7 @@ public:
     static inline bool NO_MONEY_COUNTER_ZEROES = false;
     static inline float HUD_SCALE = 0.8f;
 	static inline bool RENDER_PROGRESS_BARS = true;
-
-    enum {
-        HUD_III,
-        HUD_VC,
-        HUD_SA,
-    };
+    static inline bool NO_RADIO_HUD = true;
 
     enum {
         HUDELEMENT_CLOCK,
@@ -71,8 +67,10 @@ public:
         HUDELEMENT_WANTED,
         HUDELEMENT_NOT_WANTED,
         HUDELEMENT_ZONE,
-        HUDELEMENT_STREET,
+        //HUDELEMENT_STREET,
         HUDELEMENT_VEHICLE,
+        HUDELEMENT_RADIO_NAME,
+        HUDELEMENT_RADIO_NAME_ACTIVE,
         HUDELEMENT_RADAR_DISC,
         NUM_HUDELEMENTS
     };
@@ -88,6 +86,7 @@ public:
         uint8_t font;
         bool shadow;
         bool outline;
+        bool slant;
         CRGBA color;
         CRGBA extracolor;
         std::string str;
@@ -101,6 +100,14 @@ public:
 		NO_MONEY_COUNTER_ZEROES = config["NoMoneyCounterZeroes"].asBool(NO_MONEY_COUNTER_ZEROES);
         HUD_SCALE = config["HudScale"].asFloat(HUD_SCALE);
         RENDER_PROGRESS_BARS = config["RenderProgressBars"].asBool(RENDER_PROGRESS_BARS);
+        NO_RADIO_HUD = config["NoRadioHud"].asBool(NO_RADIO_HUD);
+
+
+        // Radio hud
+        if (NO_RADIO_HUD)
+            plugin::patch::Nop(plugin::pattern::Get("E8 ? ? ? ? 83 C4 1C 83 BD"), 5);
+        else
+            plugin::patch::NopRestore(plugin::pattern::Get("E8 ? ? ? ? 83 C4 1C 83 BD"));
     }
 
     static void LoadFontData(std::string const& filename) {
@@ -126,6 +133,7 @@ public:
                 valueIdx = 0;
                 continue;
             }
+
             if (line == "end") {
                 continue;
             }
@@ -155,13 +163,13 @@ public:
             std::istringstream iss(line);
             std::string name;
             float x, y, w, h, extraX, extraY;
-            int32_t font, align, shadow, outline;
+            int32_t font, align, shadow, outline, slant;
             int32_t cr, cg, cb, ca, exr, exg, exb, exa;
 
             if (!(iss >> name
                   >> x >> y >> w >> h
                   >> extraX >> extraY
-                  >> font >> align >> shadow >> outline
+                  >> font >> align >> shadow >> outline >> slant
                   >> cr >> cg >> cb >> ca
                   >> exr >> exg >> exb >> exa)) {
                 continue;
@@ -181,6 +189,7 @@ public:
             elem.font = static_cast<uint8_t>(font);
             elem.shadow = static_cast<uint8_t>(shadow);
             elem.outline = static_cast<uint8_t>(outline);
+            elem.slant = static_cast<uint8_t>(slant);
 
             elem.color = CRGBA(static_cast<unsigned char>(cr), static_cast<unsigned char>(cg), static_cast<unsigned char>(cb), static_cast<unsigned char>(ca));
             elem.extracolor = CRGBA(static_cast<unsigned char>(exr), static_cast<unsigned char>(exg), static_cast<unsigned char>(exb), static_cast<unsigned char>(exa));
@@ -220,9 +229,14 @@ public:
         }
     };
 
-    static void PrintString(std::wstring str, float x, float y, StringParams const& params) {
-        auto getCharWidth = [&](char c) -> float {
+    static void PrintString(std::wstring const& str, float x, float y, StringParams const& params) {        
+        auto getCharWidth = [&](wchar_t c) -> float {
             int32_t font = params.font;
+
+            if (font == 2) {
+                c = FindNewCharacter(c);
+            }
+
             if (font > 1)
                 font = 1;
 
@@ -249,14 +263,14 @@ public:
 
         if (params.align == 2) {
             for (auto& it : str) {
-                char c = it - L' ';
+                wchar_t c = it - ' ';
                 rect.left -= getCharWidth(c);
                 rect.right -= getCharWidth(c);
             }
         }
         else if (params.align == 1) {
             for (auto& it : str) {
-                char c = it - L' ';
+                wchar_t c = it - ' ';
                 rect.left -= getCharWidth(c) / 2;
                 rect.right -= getCharWidth(c) / 2;
             }
@@ -267,40 +281,41 @@ public:
 
         sprite.SetRenderState();
         for (auto& it : str) {
-            wchar_t c = it - L' ';
+            if (it != ' ') {
+                wchar_t c = it;
+                c -= ' ';
+                if (fontHalfTex)
+                    c = FindNewCharacter(c);
 
-            if (fontHalfTex) {
-                c = FindNewCharacter(c);
-            }
+                float xoff = c % 16;
+                float yoff = c / 16;
+                rage::fwRect uv = {
+                    xoff / 16.0f + 0.00125f, yoff / 12.8f + 0.0015f, (xoff + 1.0f) / 16.0f - 0.00125f, (yoff + 1.0f) / 12.8f - 0.0015f
+                };
 
-            float xoff = c % 16;
-            float yoff = c / 16;
-            rage::fwRect uv = {
-                xoff / 16.0f + 0.00125f, yoff / 12.8f + 0.0015f, (xoff + 1.0f) / 16.0f - 0.00125f, (yoff + 1.0f) / 12.8f - 0.0015f
-            };
-
-            if (params.shadow) {
-                rage::fwRect shad = rect;
-                shad.Translate(ScaleX(2.0f), ScaleY(2.0f));
-                CSprite2d::Draw(shad, uv, params.dropColor);
-            }
-
-            if (params.outline) {
-                float outlineSize = 1.0f;
-                constexpr int numOffsets = 16;
-                float angleStep = outlineSize * 3.14159265359f / numOffsets;
-
-                for (int32_t i = 0; i < numOffsets; i++) {
-                    float angle = i * angleStep;
-                    rage::fwRect edge = rect;
-                    edge.Translate(ScaleX(outlineSize * std::cos(angle)), ScaleY(outlineSize * std::sin(angle)));
-                    CSprite2d::Draw(edge, uv, params.dropColor);
+                if (params.shadow) {
+                    rage::fwRect shad = rect;
+                    shad.Translate(ScaleX(2.0f), ScaleY(2.0f));
+                    CSprite2d::Draw(shad, uv, params.dropColor);
                 }
+
+                if (params.outline) {
+                    float outlineSize = 1.0f;
+                    constexpr int numOffsets = 16;
+                    float angleStep = outlineSize * 3.14159265359f / numOffsets;
+
+                    for (int32_t i = 0; i < numOffsets; i++) {
+                        float angle = i * angleStep;
+                        rage::fwRect edge = rect;
+                        edge.Translate(ScaleX(outlineSize * std::cos(angle)), ScaleY(outlineSize * std::sin(angle)));
+                        CSprite2d::Draw(edge, uv, params.dropColor);
+                    }
+                }
+
+                CSprite2d::Draw(rect, uv, params.color);
             }
 
-            CSprite2d::Draw(rect, uv, params.color);
-
-            float charWidth = getCharWidth(c);
+            float charWidth = getCharWidth(it - ' ');
             rect.left += charWidth;
             rect.right += charWidth;
 
@@ -324,19 +339,21 @@ public:
         for (int32_t i = 0; i < 6; i++) {
             if (player->m_pPlayerInfo->m_PlayerData.GetWantedLevel() > 5 - i
                 && (CTimer::GetTimeInMilliseconds() > player->m_pPlayerInfo->m_PlayerData.m_Wanted.m_nLastWantedLevelChange + 2000 || FLASH_ITEM(500, 250)))
-                PrintString(elements[HUDELEMENT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_WANTED].x + ((5 - i) * elements[HUDELEMENT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_WANTED].y), StringParams(ScaleX(elements[HUDELEMENT_WANTED].w), ScaleY(elements[HUDELEMENT_WANTED].h), elements[HUDELEMENT_WANTED].font, elements[HUDELEMENT_WANTED].align, true, elements[HUDELEMENT_WANTED].shadow, elements[HUDELEMENT_WANTED].outline, elements[HUDELEMENT_WANTED].color, elements[HUDELEMENT_WANTED].extracolor));
+                PrintString(elements[HUDELEMENT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_WANTED].x + ((5 - i) * elements[HUDELEMENT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_WANTED].y), StringParams(ScaleX(elements[HUDELEMENT_WANTED].w), ScaleY(elements[HUDELEMENT_WANTED].h), elements[HUDELEMENT_WANTED].font, elements[HUDELEMENT_WANTED].align, true, elements[HUDELEMENT_WANTED].shadow, elements[HUDELEMENT_WANTED].outline, elements[HUDELEMENT_WANTED].color, elements[HUDELEMENT_WANTED].extracolor, elements[HUDELEMENT_WANTED].slant));
             else
-                PrintString(elements[HUDELEMENT_NOT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_NOT_WANTED].x + ((5 - i) * elements[HUDELEMENT_NOT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_NOT_WANTED].y), StringParams(ScaleX(elements[HUDELEMENT_NOT_WANTED].w), ScaleY(elements[HUDELEMENT_NOT_WANTED].h), elements[HUDELEMENT_NOT_WANTED].font, elements[HUDELEMENT_NOT_WANTED].align, true, elements[HUDELEMENT_NOT_WANTED].shadow, elements[HUDELEMENT_NOT_WANTED].outline, elements[HUDELEMENT_NOT_WANTED].color, elements[HUDELEMENT_NOT_WANTED].extracolor));
+                PrintString(elements[HUDELEMENT_NOT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_NOT_WANTED].x + ((5 - i) * elements[HUDELEMENT_NOT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_NOT_WANTED].y), StringParams(ScaleX(elements[HUDELEMENT_NOT_WANTED].w), ScaleY(elements[HUDELEMENT_NOT_WANTED].h), elements[HUDELEMENT_NOT_WANTED].font, elements[HUDELEMENT_NOT_WANTED].align, true, elements[HUDELEMENT_NOT_WANTED].shadow, elements[HUDELEMENT_NOT_WANTED].outline, elements[HUDELEMENT_NOT_WANTED].color, elements[HUDELEMENT_NOT_WANTED].extracolor, elements[HUDELEMENT_NOT_WANTED].slant));
         }
     }
 
     static inline std::wstring currStreetName = {};
     static inline std::wstring currAreaName = {};
     static inline std::wstring currVehicleName = {};
+    static inline std::wstring currRadioName = {};
 
     static inline int32_t areaNameTimer = 0;
     static inline int32_t streetNameTimer = 0;
     static inline int32_t vehicleNameTimer = 0;
+    static inline int32_t radioNameTimer = 0;
 
     static inline const uint32_t FADING_TEXT_TIME = 3500;
 
@@ -393,6 +410,9 @@ public:
         CRGBA areaColor = elements[HUDELEMENT_ZONE].color;
         areaColor.a = alpha;
 
+        CRGBA ecolor = elements[HUDELEMENT_ZONE].extracolor;
+        ecolor.a = alpha;
+
         PrintString(currAreaName,
                     SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ZONE].x),
                     SCREEN_HEIGHT - ScaleY(elements[HUDELEMENT_ZONE].y),
@@ -403,41 +423,9 @@ public:
                                  true,
                                  elements[HUDELEMENT_ZONE].shadow,
                                  elements[HUDELEMENT_ZONE].outline,
-                                 areaColor, CRGBA(0, 0, 0, alpha), true));
-    }
-
-    static void DrawStreetName() {
-        wchar_t* streetName = CUserDisplay::DisplayStreetName.m_CurrName;
-        bool force = RadarZoomedOut();
-
-        if (currStreetName.compare(streetName) != 0) {
-            currStreetName.assign(streetName);
-            streetNameTimer = CTimer::GetTimeInMilliseconds() + FADING_TEXT_TIME;
-        }
-
-        if (force)
-            streetNameTimer = CTimer::GetTimeInMilliseconds() + (FADING_TEXT_TIME / 2);
-
-        uint8_t alpha = CalculateFadeTextAlpha(streetNameTimer);
-        if (force)
-            alpha = 255;
-
-        CRGBA color = elements[HUDELEMENT_STREET].color;
-        color.a = alpha;
-
-        PrintString(currStreetName,
-                    SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_STREET].x),
-                    SCREEN_HEIGHT - ScaleY(elements[HUDELEMENT_STREET].y),
-                    StringParams(ScaleX(elements[HUDELEMENT_STREET].w),
-                                 ScaleY(elements[HUDELEMENT_STREET].h),
-                                 elements[HUDELEMENT_STREET].font,
-                                 elements[HUDELEMENT_STREET].align,
-                                 true,
-                                 elements[HUDELEMENT_STREET].shadow,
-                                 elements[HUDELEMENT_STREET].outline,
-                                 color,
-                                 CRGBA(0, 0, 0, alpha),
-                                 true));
+                                 areaColor, 
+                                 ecolor,
+                                 elements[HUDELEMENT_ZONE].slant));
     }
 
     static void DrawVehicleName() {
@@ -459,6 +447,9 @@ public:
         CRGBA color = elements[HUDELEMENT_VEHICLE].color;
         color.a = alpha;
 
+        CRGBA ecolor = elements[HUDELEMENT_VEHICLE].extracolor;
+        ecolor.a = alpha;
+
         PrintString(currVehicleName,
                     SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_VEHICLE].x),
                     SCREEN_HEIGHT - ScaleY(elements[HUDELEMENT_VEHICLE].y),
@@ -470,8 +461,69 @@ public:
                                  elements[HUDELEMENT_VEHICLE].shadow,
                                  elements[HUDELEMENT_VEHICLE].outline,
                                  color,
-                                 CRGBA(0, 0, 0, alpha),
-                                 false));
+                                 ecolor,
+                                 elements[HUDELEMENT_VEHICLE].slant));
+    }
+
+    static inline int32_t GetCurrentRadioStationFix() {
+        int32_t currRadioRoll = audRadioStation::ms_CurrRadioStationRoll;
+        int32_t currRadio = audRadioStation::ms_CurrRadioStation;
+        int32_t numStations = audRadioStation::GetNumStations() + 1;
+
+        if (currRadioRoll > numStations || currRadio > numStations || currRadioRoll < 0)
+            currRadioRoll = -1;
+
+        return currRadioRoll;
+    }
+
+    static void DrawRadioName() {
+        if (!FindPlayerVehicle(0)) {
+            currRadioName.clear();
+            return;
+        }
+
+        int32_t currRadio = GetCurrentRadioStationFix();
+        const wchar_t* radioName = nullptr;
+        if (currRadio == -1)
+            radioName = TheText.Get(0xA50CCD43, 0);
+        else
+            radioName = TheText.Get(audRadioStation::GetName(currRadio, 1));
+
+        if (currRadioName.compare(radioName) != 0) {
+            currRadioName.assign(radioName);
+
+            if (currRadio == -1)
+                radioNameTimer = CTimer::GetTimeInMilliseconds() + 1000;
+            else
+                radioNameTimer = CTimer::GetTimeInMilliseconds() + 2000;
+        }
+
+        if (currRadioName.empty())
+            return;
+
+        if (radioNameTimer < CTimer::GetTimeInMilliseconds())
+            return;
+
+        auto radioElement = &elements[HUDELEMENT_RADIO_NAME];
+        if (audRadioStation::ms_CurrRadioStation != audRadioStation::ms_CurrRadioStationRoll)
+            radioElement = &elements[HUDELEMENT_RADIO_NAME_ACTIVE];
+
+        CRGBA color = radioElement->color;
+        CRGBA ecolor = radioElement->extracolor;
+
+        PrintString(currRadioName,
+                    (SCREEN_WIDTH / 2) + ScaleX(radioElement->x),
+                    ScaleY(radioElement->y),
+                    StringParams(ScaleX(radioElement->w),
+                                 ScaleY(radioElement->h),
+                                 radioElement->font,
+                                 radioElement->align,
+                                 true,
+                                 radioElement->shadow,
+                                 radioElement->outline,
+                                 color,
+                                 ecolor,
+                                 radioElement->slant));
     }
 
     static void DrawWeaponIconAndAmmo() {
@@ -598,18 +650,19 @@ public:
                 break;
             case WEAPONTYPE_OBJECT: {
                 sprite = spriteLoader.GetSprite("unarmedt");
-
-                if (object) {
-                    int16_t index = object->m_nModelIndex;
-                    auto hash = CModelInfo::ms_modelInfoPtrs[index]->m_nHash;
-                    switch (hash) {
-                    case eModelHashes::MODEL_HASH_CJ_MOBILE_HAND_1:
-                        sprite = spriteLoader.GetSprite("unarmed");
-                        break;
-                    default:
-                        break;
-                    }
-                }
+                if (CPlayerInfo::ms_bDisplayingPhone)
+                    sprite = spriteLoader.GetSprite("unarmed");
+                //if (object) {
+                //    int16_t index = object->m_nModelIndex;
+                //    auto hash = CModelInfo::ms_modelInfoPtrs[index]->m_nHash;
+                //    switch (hash) {
+                //    case eModelHashes::MODEL_HASH_CJ_MOBILE_HAND_1:
+                //        sprite = spriteLoader.GetSprite("unarmed");
+                //        break;
+                //    default:
+                //        break;
+                //    }
+                //}
             } break;
         }
 
@@ -653,7 +706,7 @@ public:
                     sprintf(buf, "%d-%d", ammo, clip);
                 }
             }
-            PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_AMMO].x), ScaleY(elements[HUDELEMENT_AMMO].y), StringParams(ScaleX(elements[HUDELEMENT_AMMO].w), ScaleY(elements[HUDELEMENT_AMMO].h), elements[HUDELEMENT_AMMO].font, elements[HUDELEMENT_AMMO].align, true, elements[HUDELEMENT_AMMO].shadow, elements[HUDELEMENT_AMMO].outline, elements[HUDELEMENT_AMMO].color, elements[HUDELEMENT_AMMO].extracolor));
+            PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_AMMO].x), ScaleY(elements[HUDELEMENT_AMMO].y), StringParams(ScaleX(elements[HUDELEMENT_AMMO].w), ScaleY(elements[HUDELEMENT_AMMO].h), elements[HUDELEMENT_AMMO].font, elements[HUDELEMENT_AMMO].align, true, elements[HUDELEMENT_AMMO].shadow, elements[HUDELEMENT_AMMO].outline, elements[HUDELEMENT_AMMO].color, elements[HUDELEMENT_AMMO].extracolor, elements[HUDELEMENT_AMMO].slant));
         }
     }
 
@@ -662,10 +715,10 @@ public:
         char buf[32] = { 0 };
 
         sprintf(buf, NO_MONEY_COUNTER_ZEROES ? "$%d" : "$%08d", playa->m_pPlayerInfo->m_nDisplayMoney);
-        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_MONEY].x), ScaleY(elements[HUDELEMENT_MONEY].y), StringParams(ScaleX(elements[HUDELEMENT_MONEY].w), ScaleY(elements[HUDELEMENT_MONEY].h), elements[HUDELEMENT_MONEY].font, elements[HUDELEMENT_MONEY].align, false, elements[HUDELEMENT_MONEY].shadow, elements[HUDELEMENT_MONEY].outline, elements[HUDELEMENT_MONEY].color, elements[HUDELEMENT_MONEY].extracolor));
+        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_MONEY].x), ScaleY(elements[HUDELEMENT_MONEY].y), StringParams(ScaleX(elements[HUDELEMENT_MONEY].w), ScaleY(elements[HUDELEMENT_MONEY].h), elements[HUDELEMENT_MONEY].font, elements[HUDELEMENT_MONEY].align, false, elements[HUDELEMENT_MONEY].shadow, elements[HUDELEMENT_MONEY].outline, elements[HUDELEMENT_MONEY].color, elements[HUDELEMENT_MONEY].extracolor, elements[HUDELEMENT_MONEY].slant));
 
         sprintf(buf, "%02d:%02d", CClock::ms_nGameClockHours, CClock::ms_nGameClockMinutes);
-        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_CLOCK].x), ScaleY(elements[HUDELEMENT_CLOCK].y), StringParams(ScaleX(elements[HUDELEMENT_CLOCK].w), ScaleY(elements[HUDELEMENT_CLOCK].h), elements[HUDELEMENT_CLOCK].font, elements[HUDELEMENT_CLOCK].align, false, elements[HUDELEMENT_CLOCK].shadow, elements[HUDELEMENT_CLOCK].outline, elements[HUDELEMENT_CLOCK].color, elements[HUDELEMENT_CLOCK].extracolor));
+        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_CLOCK].x), ScaleY(elements[HUDELEMENT_CLOCK].y), StringParams(ScaleX(elements[HUDELEMENT_CLOCK].w), ScaleY(elements[HUDELEMENT_CLOCK].h), elements[HUDELEMENT_CLOCK].font, elements[HUDELEMENT_CLOCK].align, false, elements[HUDELEMENT_CLOCK].shadow, elements[HUDELEMENT_CLOCK].outline, elements[HUDELEMENT_CLOCK].color, elements[HUDELEMENT_CLOCK].extracolor, elements[HUDELEMENT_CLOCK].slant));
     }
 
     static inline float lastPlayerHealth = 200.0f;
@@ -714,10 +767,10 @@ public:
                 }
                 else {
                     sprintf(buf, "%03d", (int32_t)progress);
-                    PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH].x), ScaleY(elements[HUDELEMENT_HEALTH].y), StringParams(ScaleX(elements[HUDELEMENT_HEALTH].w), ScaleY(elements[HUDELEMENT_HEALTH].h), elements[HUDELEMENT_HEALTH].font, elements[HUDELEMENT_HEALTH].align, false, elements[HUDELEMENT_HEALTH].shadow, elements[HUDELEMENT_HEALTH].outline, elements[HUDELEMENT_HEALTH].color, elements[HUDELEMENT_HEALTH].extracolor));
+                    PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH].x), ScaleY(elements[HUDELEMENT_HEALTH].y), StringParams(ScaleX(elements[HUDELEMENT_HEALTH].w), ScaleY(elements[HUDELEMENT_HEALTH].h), elements[HUDELEMENT_HEALTH].font, elements[HUDELEMENT_HEALTH].align, false, elements[HUDELEMENT_HEALTH].shadow, elements[HUDELEMENT_HEALTH].outline, elements[HUDELEMENT_HEALTH].color, elements[HUDELEMENT_HEALTH].extracolor, elements[HUDELEMENT_HEALTH].slant));
                 }
 
-                PrintString(elements[HUDELEMENT_HEALTH_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH_ICON].x), ScaleY(elements[HUDELEMENT_HEALTH_ICON].y), StringParams(ScaleX(elements[HUDELEMENT_HEALTH_ICON].w), ScaleY(elements[HUDELEMENT_HEALTH_ICON].h), elements[HUDELEMENT_HEALTH_ICON].font, elements[HUDELEMENT_HEALTH_ICON].align, false, elements[HUDELEMENT_HEALTH_ICON].shadow, elements[HUDELEMENT_HEALTH_ICON].outline, elements[HUDELEMENT_HEALTH_ICON].color, elements[HUDELEMENT_HEALTH_ICON].extracolor));
+                PrintString(elements[HUDELEMENT_HEALTH_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH_ICON].x), ScaleY(elements[HUDELEMENT_HEALTH_ICON].y), StringParams(ScaleX(elements[HUDELEMENT_HEALTH_ICON].w), ScaleY(elements[HUDELEMENT_HEALTH_ICON].h), elements[HUDELEMENT_HEALTH_ICON].font, elements[HUDELEMENT_HEALTH_ICON].align, false, elements[HUDELEMENT_HEALTH_ICON].shadow, elements[HUDELEMENT_HEALTH_ICON].outline, elements[HUDELEMENT_HEALTH_ICON].color, elements[HUDELEMENT_HEALTH_ICON].extracolor, elements[HUDELEMENT_HEALTH_ICON].slant));
             }
         }
 
@@ -745,10 +798,10 @@ public:
                         char buf[32] = { 0 };
 
                         sprintf(buf, "%03d", (int32_t)progress);
-                        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR].x), ScaleY(elements[HUDELEMENT_ARMOUR].y), StringParams(ScaleX(elements[HUDELEMENT_ARMOUR].w), ScaleY(elements[HUDELEMENT_ARMOUR].h), elements[HUDELEMENT_ARMOUR].font, elements[HUDELEMENT_ARMOUR].align, false, elements[HUDELEMENT_ARMOUR].shadow, elements[HUDELEMENT_ARMOUR].outline, elements[HUDELEMENT_ARMOUR].color, elements[HUDELEMENT_ARMOUR].extracolor));
+                        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR].x), ScaleY(elements[HUDELEMENT_ARMOUR].y), StringParams(ScaleX(elements[HUDELEMENT_ARMOUR].w), ScaleY(elements[HUDELEMENT_ARMOUR].h), elements[HUDELEMENT_ARMOUR].font, elements[HUDELEMENT_ARMOUR].align, false, elements[HUDELEMENT_ARMOUR].shadow, elements[HUDELEMENT_ARMOUR].outline, elements[HUDELEMENT_ARMOUR].color, elements[HUDELEMENT_ARMOUR].extracolor, elements[HUDELEMENT_ARMOUR].slant));
                     }
 
-                    PrintString(elements[HUDELEMENT_ARMOUR_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR_ICON].x), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].y), StringParams(ScaleX(elements[HUDELEMENT_ARMOUR_ICON].w), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].h), elements[HUDELEMENT_ARMOUR_ICON].font, elements[HUDELEMENT_ARMOUR_ICON].align, false, elements[HUDELEMENT_ARMOUR_ICON].shadow, elements[HUDELEMENT_ARMOUR_ICON].outline, elements[HUDELEMENT_ARMOUR_ICON].color, elements[HUDELEMENT_ARMOUR_ICON].extracolor));
+                    PrintString(elements[HUDELEMENT_ARMOUR_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR_ICON].x), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].y), StringParams(ScaleX(elements[HUDELEMENT_ARMOUR_ICON].w), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].h), elements[HUDELEMENT_ARMOUR_ICON].font, elements[HUDELEMENT_ARMOUR_ICON].align, false, elements[HUDELEMENT_ARMOUR_ICON].shadow, elements[HUDELEMENT_ARMOUR_ICON].outline, elements[HUDELEMENT_ARMOUR_ICON].color, elements[HUDELEMENT_ARMOUR_ICON].extracolor, elements[HUDELEMENT_ARMOUR_ICON].slant));
                 }
             }
         }
@@ -785,6 +838,8 @@ public:
             DrawVehicleName();
         }
 
+        DrawRadioName();
+
         SetScaleMult();
         //DrawDebugStuff();
     }
@@ -797,14 +852,11 @@ public:
             TheViewport.m_bWidescreen)
             return;
 
-        if (plugin::scripting::CallCommandById<bool>(plugin::Commands::ARE_WIDESCREEN_BORDERS_ACTIVE) ||
-            plugin::scripting::CallCommandById<bool>(plugin::Commands::IS_FRONTEND_FADING))
+        if (plugin::scripting::CallCommandById<bool>(plugin::Commands::ARE_WIDESCREEN_BORDERS_ACTIVE))
             return;
 
         auto base = new T_CB_Generic_NoArgs(DrawHudCB);
         base->Init();
-
-        CHud::Components[aHudComponentInfo[HUD_RADAR].m_nIndex]->pos.x = 0.040f * HUD_SCALE;
     }
 
     static void DrawRadarBack() {
@@ -823,39 +875,6 @@ public:
     static void DrawRadarMask() {
 
     }
-
-    static void DrawDebugStuff() {
-        CFont::SetProportional(true);
-        CFont::SetBackground(false, false);
-        CFont::SetWrapx(0.0f, 1.0f);
-        CFont::SetOrientation(ALIGN_RIGHT);
-        CFont::SetEdge(1.0f);
-        CFont::SetScale(0.2f, 0.2f);
-        CFont::SetFontStyle(FONT_HELVETICA);
-        CFont::SetColor({ 225, 225, 225, 255 });
-        CFont::SetDropColor({ 0, 0, 0, 255 });
-
-        char buf[128] = { '\0' };
-        wchar_t wbuf[128] = { '\0' };
-
-        auto playa = FindPlayerPed(0);
-        if (playa) {
-            auto mat = playa->m_pMatrix;
-
-            if (mat) {
-                sprintf(buf, "%3.3f, %3.3f, %3.3f", mat->pos.x, mat->pos.y, mat->pos.z);
-                AsciiToUnicode(buf, wbuf);
-                CFont::PrintString(0.0f, 0.0f, wbuf);
-
-                sprintf(buf, "%f", playa->GetForward().Magnitude());
-                AsciiToUnicode(buf, wbuf);
-                CFont::PrintString(0.0f, 0.025f, wbuf);
-
-                CFont::DrawFonts();
-            }
-        }
-    }
-
 
     static void Init() {
         spriteLoader.LoadAllSpritesFromFolder(PLUGIN_PATH("ClassicHud\\fonts"));
@@ -908,26 +927,30 @@ public:
         };
 
         // No zone name
-        plugin::patch::SetUChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? 83 C4 ? 80 3D ? ? ? ? ? A3 ? ? ? ? 74 ? 80 3D ? ? ? ? ? 75 ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? EB ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? 83 C4", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? 83 C4 ? 80 3D ? ? ? ? ? A3 ? ? ? ? 74 ? 80 3D ? ? ? ? ? 75 ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? EB ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? 83 C4", 1), -1);
 
         // No street name
-        plugin::patch::SetUChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? 83 C4 ? 80 3D ? ? ? ? ? A3 ? ? ? ? 74 ? 80 3D ? ? ? ? ? 75 ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? EB ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? FF D7", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? 83 C4 ? 80 3D ? ? ? ? ? A3 ? ? ? ? 74 ? 80 3D ? ? ? ? ? 75 ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? EB ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? FF D7", 1), -1);
 
         // No vehicle name
-        plugin::patch::SetUChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? FF 35", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? FF 35", 1), -1);
 
         // No weapon icon
-        plugin::patch::SetUChar(plugin::pattern::Get("6A 02 68 ? ? ? ? E8 ? ? ? ? 8B 3D", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A 02 68 ? ? ? ? E8 ? ? ? ? 8B 3D", 1), -1);
 
         // No ammo
-        plugin::patch::SetUChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? 8B 3D ", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? 8B 3D ", 1), -1);
 
         // No money
-        plugin::patch::SetUChar(plugin::pattern::Get("6A 05 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? 83 C4 54", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A 05 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? 83 C4 54", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40", 1), -1);
+
+        // No text message icon
+        plugin::patch::SetChar(plugin::pattern::Get("6A ? 68 ? ? ? ? E8 ? ? ? ? 8B 0C 85 ? ? ? ? 83 C4 ? A3 ? ? ? ? 68 ? ? ? ? E8 ? ? ? ? FF 35 ? ? ? ? FF 35 ? ? ? ? 6A ? 68 ? ? ? ? 68 ? ? ? ? 6A ? 68 ? ? ? ? E8 ? ? ? ? 8B 0C 85 ? ? ? ? 83 C4 ? A3 ? ? ? ? 68 ? ? ? ? E8 ? ? ? ? FF 35", 1), -1);
 
         // No wanted
-        plugin::patch::SetUChar(plugin::pattern::Get("6A 05 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 04 01 A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 38 00 FF 35 ? ? ? ? FF 35 ? ? ? ? 6A 01 68 ? ? ? ? 68 ? ? ? ? 6A 05", 1), -1);
-        plugin::patch::SetUChar(plugin::pattern::Get("6A 05 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? B9", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A 05 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? C7 40 ? ? ? ? ? A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 04 01 A1 ? ? ? ? 8B 04 85 ? ? ? ? C6 40 38 00 FF 35 ? ? ? ? FF 35 ? ? ? ? 6A 01 68 ? ? ? ? 68 ? ? ? ? 6A 05", 1), -1);
+        plugin::patch::SetChar(plugin::pattern::Get("6A 05 68 ? ? ? ? E8 ? ? ? ? A3 ? ? ? ? 8B 04 85 ? ? ? ? B9", 1), -1);
 
         plugin::patch::PutRetn(plugin::pattern::Get("83 EC 10 53 6A 00 E8")); // CRadar::DrawHealthAndArmour
         plugin::patch::RedirectJump(plugin::pattern::Get("83 EC 2C A1 ? ? ? ? 33 C4 89 44 24 28 83 3D"), DrawRadarBack);
