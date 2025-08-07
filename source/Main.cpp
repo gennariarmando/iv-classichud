@@ -58,7 +58,7 @@ public:
     enum {
         HUDELEMENT_CLOCK,
         HUDELEMENT_MONEY,
-        HUDELEMENT_WEAPON,
+		HUDELEMENT_WEAPON,
         HUDELEMENT_AMMO,
         HUDELEMENT_HEALTH,
         HUDELEMENT_HEALTH_ICON,
@@ -84,6 +84,8 @@ public:
         float extraY;
         uint8_t align;
         uint8_t font;
+        uint8_t halfFont;
+        uint8_t prop;
         bool shadow;
         bool outline;
         bool slant;
@@ -163,13 +165,13 @@ public:
             std::istringstream iss(line);
             std::string name;
             float x, y, w, h, extraX, extraY;
-            int32_t font, align, shadow, outline, slant;
+            int32_t font, halfFont, prop, align, shadow, outline, slant;
             int32_t cr, cg, cb, ca, exr, exg, exb, exa;
 
             if (!(iss >> name
                   >> x >> y >> w >> h
                   >> extraX >> extraY
-                  >> font >> align >> shadow >> outline >> slant
+                  >> font >> halfFont >> prop >> align >> shadow >> outline >> slant
                   >> cr >> cg >> cb >> ca
                   >> exr >> exg >> exb >> exa)) {
                 continue;
@@ -185,8 +187,10 @@ public:
             elem.h = h;
             elem.extraX = extraX;
             elem.extraY = extraY;
-            elem.align = static_cast<uint8_t>(align);
             elem.font = static_cast<uint8_t>(font);
+            elem.halfFont = static_cast<uint8_t>(halfFont);
+            elem.prop = static_cast<uint8_t>(prop);
+            elem.align = static_cast<uint8_t>(align);
             elem.shadow = static_cast<uint8_t>(shadow);
             elem.outline = static_cast<uint8_t>(outline);
             elem.slant = static_cast<uint8_t>(slant);
@@ -217,6 +221,7 @@ public:
         float w;
         float h;
         int32_t font;
+        int32_t halfFont;
         int32_t align;
         bool prop;
         bool shadow;
@@ -224,21 +229,18 @@ public:
         rage::Color32 color;
         rage::Color32 dropColor;
         bool slant;
-        StringParams(float w, float h, int32_t font, int32_t align, bool prop, bool shadow, bool outline, rage::Color32 const& color, rage::Color32 const& dropColor, bool slant = false)
-            : w(w), h(h), font(font), align(align), prop(prop), shadow(shadow), outline(outline), color(color), dropColor(dropColor), slant(slant) {
+        StringParams(float w, float h, int32_t font, int32_t halfFont, int32_t align, bool prop, bool shadow, bool outline, rage::Color32 const& color, rage::Color32 const& dropColor, bool slant = false)
+            : w(w), h(h), font(font), halfFont(halfFont), align(align), prop(prop), shadow(shadow), outline(outline), color(color), dropColor(dropColor), slant(slant) {
         }
     };
 
     static void PrintString(std::wstring const& str, float x, float y, StringParams const& params) {        
         auto getCharWidth = [&](wchar_t c) -> float {
-            int32_t font = params.font;
+            int32_t font = params.font - 1;
 
-            if (font == 2) {
+            if (params.halfFont) {
                 c = FindNewCharacter(c);
             }
-
-            if (font > 1)
-                font = 1;
 
             if (params.prop) {
                 return fontSize[font][c] * params.w;
@@ -250,15 +252,17 @@ public:
 
         static CSprite2d sprite;
         switch (params.font) {
-            case 0:
+            case 1:
+                sprite = spriteLoader.GetSprite("font1");
+                break;
+            case 2:
                 sprite = spriteLoader.GetSprite("font2");
                 break;
             default:
-                sprite = spriteLoader.GetSprite("font1");
-                break;
+                return;
         }
 
-        bool fontHalfTex = params.font == 2;
+        bool fontHalfTex = params.halfFont;
         rage::fwRect rect = { x, y, x + 32.0f * params.w * 1.0f, y + 40.0f * params.h * 0.5f };
 
         if (params.align == 2) {
@@ -333,15 +337,20 @@ public:
         PrintString(wide, x, y, params);
     }
 
+    static inline StringParams GetStringParams(int32_t element) {
+        auto& elem = elements[element];
+        return StringParams(ScaleX(elem.w), ScaleY(elem.h), elem.font, elem.halfFont, elem.align, elem.prop, elem.shadow, elem.outline, elem.color, elem.extracolor, elem.slant);
+	}
+
     static void DrawWanted() {
         auto player = FindPlayerPed(0);
 
         for (int32_t i = 0; i < 6; i++) {
             if (player->m_pPlayerInfo->m_PlayerData.GetWantedLevel() > 5 - i
                 && (CTimer::GetTimeInMilliseconds() > player->m_pPlayerInfo->m_PlayerData.m_Wanted.m_nLastWantedLevelChange + 2000 || FLASH_ITEM(500, 250)))
-                PrintString(elements[HUDELEMENT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_WANTED].x + ((5 - i) * elements[HUDELEMENT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_WANTED].y), StringParams(ScaleX(elements[HUDELEMENT_WANTED].w), ScaleY(elements[HUDELEMENT_WANTED].h), elements[HUDELEMENT_WANTED].font, elements[HUDELEMENT_WANTED].align, true, elements[HUDELEMENT_WANTED].shadow, elements[HUDELEMENT_WANTED].outline, elements[HUDELEMENT_WANTED].color, elements[HUDELEMENT_WANTED].extracolor, elements[HUDELEMENT_WANTED].slant));
+                PrintString(elements[HUDELEMENT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_WANTED].x + ((5 - i) * elements[HUDELEMENT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_WANTED].y), GetStringParams(HUDELEMENT_WANTED));
             else
-                PrintString(elements[HUDELEMENT_NOT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_NOT_WANTED].x + ((5 - i) * elements[HUDELEMENT_NOT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_NOT_WANTED].y), StringParams(ScaleX(elements[HUDELEMENT_NOT_WANTED].w), ScaleY(elements[HUDELEMENT_NOT_WANTED].h), elements[HUDELEMENT_NOT_WANTED].font, elements[HUDELEMENT_NOT_WANTED].align, true, elements[HUDELEMENT_NOT_WANTED].shadow, elements[HUDELEMENT_NOT_WANTED].outline, elements[HUDELEMENT_NOT_WANTED].color, elements[HUDELEMENT_NOT_WANTED].extracolor, elements[HUDELEMENT_NOT_WANTED].slant));
+                PrintString(elements[HUDELEMENT_NOT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_NOT_WANTED].x + ((5 - i) * elements[HUDELEMENT_NOT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_NOT_WANTED].y), GetStringParams(HUDELEMENT_NOT_WANTED));
         }
     }
 
@@ -407,25 +416,14 @@ public:
         if (force)
             alpha = 255;
 
-        CRGBA areaColor = elements[HUDELEMENT_ZONE].color;
-        areaColor.a = alpha;
-
-        CRGBA ecolor = elements[HUDELEMENT_ZONE].extracolor;
-        ecolor.a = alpha;
+        auto params = GetStringParams(HUDELEMENT_ZONE);
+        params.color.a = alpha;
+        params.dropColor.a = alpha;
 
         PrintString(currAreaName,
                     SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ZONE].x),
                     SCREEN_HEIGHT - ScaleY(elements[HUDELEMENT_ZONE].y),
-                    StringParams(ScaleX(elements[HUDELEMENT_ZONE].w),
-                                 ScaleY(elements[HUDELEMENT_ZONE].h),
-                                 elements[HUDELEMENT_ZONE].font,
-                                 elements[HUDELEMENT_ZONE].align,
-                                 true,
-                                 elements[HUDELEMENT_ZONE].shadow,
-                                 elements[HUDELEMENT_ZONE].outline,
-                                 areaColor, 
-                                 ecolor,
-                                 elements[HUDELEMENT_ZONE].slant));
+                    params);
     }
 
     static void DrawVehicleName() {
@@ -444,25 +442,14 @@ public:
         if (force)
             alpha = 255;
 
-        CRGBA color = elements[HUDELEMENT_VEHICLE].color;
-        color.a = alpha;
-
-        CRGBA ecolor = elements[HUDELEMENT_VEHICLE].extracolor;
-        ecolor.a = alpha;
+        auto params = GetStringParams(HUDELEMENT_VEHICLE);
+        params.color.a = alpha;
+        params.dropColor.a = alpha;
 
         PrintString(currVehicleName,
                     SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_VEHICLE].x),
                     SCREEN_HEIGHT - ScaleY(elements[HUDELEMENT_VEHICLE].y),
-                    StringParams(ScaleX(elements[HUDELEMENT_VEHICLE].w),
-                                 ScaleY(elements[HUDELEMENT_VEHICLE].h),
-                                 elements[HUDELEMENT_VEHICLE].font,
-                                 elements[HUDELEMENT_VEHICLE].align,
-                                 true,
-                                 elements[HUDELEMENT_VEHICLE].shadow,
-                                 elements[HUDELEMENT_VEHICLE].outline,
-                                 color,
-                                 ecolor,
-                                 elements[HUDELEMENT_VEHICLE].slant));
+                    params);
     }
 
     static inline int32_t GetCurrentRadioStationFix() {
@@ -504,26 +491,18 @@ public:
         if (radioNameTimer < CTimer::GetTimeInMilliseconds())
             return;
 
-        auto radioElement = &elements[HUDELEMENT_RADIO_NAME];
-        if (audRadioStation::ms_CurrRadioStation != audRadioStation::ms_CurrRadioStationRoll)
-            radioElement = &elements[HUDELEMENT_RADIO_NAME_ACTIVE];
+        auto radioElement = &elements[HUDELEMENT_RADIO_NAME];      
+        auto params = GetStringParams(HUDELEMENT_RADIO_NAME);
 
-        CRGBA color = radioElement->color;
-        CRGBA ecolor = radioElement->extracolor;
+        if (audRadioStation::ms_CurrRadioStation != audRadioStation::ms_CurrRadioStationRoll) {
+            radioElement = &elements[HUDELEMENT_RADIO_NAME_ACTIVE];
+            params = GetStringParams(HUDELEMENT_RADIO_NAME_ACTIVE);
+        }
 
         PrintString(currRadioName,
                     (SCREEN_WIDTH / 2) + ScaleX(radioElement->x),
                     ScaleY(radioElement->y),
-                    StringParams(ScaleX(radioElement->w),
-                                 ScaleY(radioElement->h),
-                                 radioElement->font,
-                                 radioElement->align,
-                                 true,
-                                 radioElement->shadow,
-                                 radioElement->outline,
-                                 color,
-                                 ecolor,
-                                 radioElement->slant));
+                    params);
     }
 
     static void DrawWeaponIconAndAmmo() {
@@ -706,7 +685,7 @@ public:
                     sprintf(buf, "%d-%d", ammo, clip);
                 }
             }
-            PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_AMMO].x), ScaleY(elements[HUDELEMENT_AMMO].y), StringParams(ScaleX(elements[HUDELEMENT_AMMO].w), ScaleY(elements[HUDELEMENT_AMMO].h), elements[HUDELEMENT_AMMO].font, elements[HUDELEMENT_AMMO].align, true, elements[HUDELEMENT_AMMO].shadow, elements[HUDELEMENT_AMMO].outline, elements[HUDELEMENT_AMMO].color, elements[HUDELEMENT_AMMO].extracolor, elements[HUDELEMENT_AMMO].slant));
+            PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_AMMO].x), ScaleY(elements[HUDELEMENT_AMMO].y), GetStringParams(HUDELEMENT_AMMO));
         }
     }
 
@@ -715,10 +694,10 @@ public:
         char buf[32] = { 0 };
 
         sprintf(buf, NO_MONEY_COUNTER_ZEROES ? "$%d" : "$%08d", playa->m_pPlayerInfo->m_nDisplayMoney);
-        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_MONEY].x), ScaleY(elements[HUDELEMENT_MONEY].y), StringParams(ScaleX(elements[HUDELEMENT_MONEY].w), ScaleY(elements[HUDELEMENT_MONEY].h), elements[HUDELEMENT_MONEY].font, elements[HUDELEMENT_MONEY].align, false, elements[HUDELEMENT_MONEY].shadow, elements[HUDELEMENT_MONEY].outline, elements[HUDELEMENT_MONEY].color, elements[HUDELEMENT_MONEY].extracolor, elements[HUDELEMENT_MONEY].slant));
+        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_MONEY].x), ScaleY(elements[HUDELEMENT_MONEY].y), GetStringParams(HUDELEMENT_MONEY));
 
         sprintf(buf, "%02d:%02d", CClock::ms_nGameClockHours, CClock::ms_nGameClockMinutes);
-        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_CLOCK].x), ScaleY(elements[HUDELEMENT_CLOCK].y), StringParams(ScaleX(elements[HUDELEMENT_CLOCK].w), ScaleY(elements[HUDELEMENT_CLOCK].h), elements[HUDELEMENT_CLOCK].font, elements[HUDELEMENT_CLOCK].align, false, elements[HUDELEMENT_CLOCK].shadow, elements[HUDELEMENT_CLOCK].outline, elements[HUDELEMENT_CLOCK].color, elements[HUDELEMENT_CLOCK].extracolor, elements[HUDELEMENT_CLOCK].slant));
+        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_CLOCK].x), ScaleY(elements[HUDELEMENT_CLOCK].y), GetStringParams(HUDELEMENT_CLOCK));
     }
 
     static inline float lastPlayerHealth = 200.0f;
@@ -767,10 +746,10 @@ public:
                 }
                 else {
                     sprintf(buf, "%03d", (int32_t)progress);
-                    PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH].x), ScaleY(elements[HUDELEMENT_HEALTH].y), StringParams(ScaleX(elements[HUDELEMENT_HEALTH].w), ScaleY(elements[HUDELEMENT_HEALTH].h), elements[HUDELEMENT_HEALTH].font, elements[HUDELEMENT_HEALTH].align, false, elements[HUDELEMENT_HEALTH].shadow, elements[HUDELEMENT_HEALTH].outline, elements[HUDELEMENT_HEALTH].color, elements[HUDELEMENT_HEALTH].extracolor, elements[HUDELEMENT_HEALTH].slant));
+                    PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH].x), ScaleY(elements[HUDELEMENT_HEALTH].y), GetStringParams(HUDELEMENT_HEALTH));
                 }
 
-                PrintString(elements[HUDELEMENT_HEALTH_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH_ICON].x), ScaleY(elements[HUDELEMENT_HEALTH_ICON].y), StringParams(ScaleX(elements[HUDELEMENT_HEALTH_ICON].w), ScaleY(elements[HUDELEMENT_HEALTH_ICON].h), elements[HUDELEMENT_HEALTH_ICON].font, elements[HUDELEMENT_HEALTH_ICON].align, false, elements[HUDELEMENT_HEALTH_ICON].shadow, elements[HUDELEMENT_HEALTH_ICON].outline, elements[HUDELEMENT_HEALTH_ICON].color, elements[HUDELEMENT_HEALTH_ICON].extracolor, elements[HUDELEMENT_HEALTH_ICON].slant));
+                PrintString(elements[HUDELEMENT_HEALTH_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_HEALTH_ICON].x), ScaleY(elements[HUDELEMENT_HEALTH_ICON].y), GetStringParams(HUDELEMENT_HEALTH_ICON));
             }
         }
 
@@ -798,10 +777,10 @@ public:
                         char buf[32] = { 0 };
 
                         sprintf(buf, "%03d", (int32_t)progress);
-                        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR].x), ScaleY(elements[HUDELEMENT_ARMOUR].y), StringParams(ScaleX(elements[HUDELEMENT_ARMOUR].w), ScaleY(elements[HUDELEMENT_ARMOUR].h), elements[HUDELEMENT_ARMOUR].font, elements[HUDELEMENT_ARMOUR].align, false, elements[HUDELEMENT_ARMOUR].shadow, elements[HUDELEMENT_ARMOUR].outline, elements[HUDELEMENT_ARMOUR].color, elements[HUDELEMENT_ARMOUR].extracolor, elements[HUDELEMENT_ARMOUR].slant));
+                        PrintString(buf, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR].x), ScaleY(elements[HUDELEMENT_ARMOUR].y), GetStringParams(HUDELEMENT_ARMOUR));
                     }
 
-                    PrintString(elements[HUDELEMENT_ARMOUR_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR_ICON].x), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].y), StringParams(ScaleX(elements[HUDELEMENT_ARMOUR_ICON].w), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].h), elements[HUDELEMENT_ARMOUR_ICON].font, elements[HUDELEMENT_ARMOUR_ICON].align, false, elements[HUDELEMENT_ARMOUR_ICON].shadow, elements[HUDELEMENT_ARMOUR_ICON].outline, elements[HUDELEMENT_ARMOUR_ICON].color, elements[HUDELEMENT_ARMOUR_ICON].extracolor, elements[HUDELEMENT_ARMOUR_ICON].slant));
+                    PrintString(elements[HUDELEMENT_ARMOUR_ICON].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_ARMOUR_ICON].x), ScaleY(elements[HUDELEMENT_ARMOUR_ICON].y), GetStringParams(HUDELEMENT_ARMOUR_ICON));
                 }
             }
         }
