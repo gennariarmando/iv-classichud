@@ -57,17 +57,19 @@ static float ScaleH(float h) {
     return f * ScaleMult;
 }
 
-static void DrawProgressBar(float x, float y, float w, float h, float progress, bool shadow, bool outline, rage::Color32 const& front, rage::Color32 const& back) {
+static void DrawProgressBar(float x, float y, float w, float h, float progress, uint8_t shadow, uint8_t outline, rage::Color32 const& front, rage::Color32 const& back) {
     progress = plugin::Clamp(progress, 0.0f, 1.0f);
 
-    float b = ScaleY(1.0f);
-    float s = ScaleY(2.0f);
+    float bx = ScaleX(outline * 1.0f);
+    float by = ScaleY(outline * 1.0f);
+    float sx = ScaleX(shadow * 1.0f);
+    float sy = ScaleY(shadow * 1.0f);
 
     if (shadow)
-        CSprite2d::DrawRect({ x + s, y + s, x + w + s, y + h + s }, CRGBA(0, 0, 0, (int32_t)std::min(back.a, (uint8_t)200)));
+        CSprite2d::DrawRect({ x + sx, y + sy, x + w + sx, y + h + sy }, CRGBA(0, 0, 0, (int32_t)std::min(back.a, (uint8_t)200)));
 
     if (outline)
-        CSprite2d::DrawRect({ x - b, y - b, x + w + b, y + h + b }, { 0, 0, 0, back.a });
+        CSprite2d::DrawRect({ x - bx, y - by, x + w + bx, y + h + by }, { 0, 0, 0, back.a });
 
     CSprite2d::DrawRect({ x, y, x + w, y + h }, back);
 

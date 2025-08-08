@@ -54,6 +54,8 @@ public:
     static inline float HUD_SCALE = 0.8f;
 	static inline bool RENDER_PROGRESS_BARS = true;
     static inline bool NO_RADIO_HUD = true;
+    static inline bool BLINK_ON_UPDATE = true;
+    static inline bool ALWAYS_SHOW_WANTED_STARS = true;
 
     enum {
         HUDELEMENT_CLOCK,
@@ -86,8 +88,8 @@ public:
         uint8_t font;
         uint8_t halfFont;
         uint8_t prop;
-        bool shadow;
-        bool outline;
+        uint8_t shadow;
+        uint8_t outline;
         bool slant;
         CRGBA color;
         CRGBA extracolor;
@@ -103,7 +105,8 @@ public:
         HUD_SCALE = config["HudScale"].asFloat(HUD_SCALE);
         RENDER_PROGRESS_BARS = config["RenderProgressBars"].asBool(RENDER_PROGRESS_BARS);
         NO_RADIO_HUD = config["NoRadioHud"].asBool(NO_RADIO_HUD);
-
+        BLINK_ON_UPDATE = config["BlinkOnUpdate"].asBool(BLINK_ON_UPDATE);
+        ALWAYS_SHOW_WANTED_STARS = config["AlwaysShowWantedStars"].asBool(ALWAYS_SHOW_WANTED_STARS);
 
         // Radio hud
         if (NO_RADIO_HUD)
@@ -224,12 +227,12 @@ public:
         int32_t halfFont;
         int32_t align;
         bool prop;
-        bool shadow;
-        bool outline;
+        uint8_t shadow;
+        uint8_t outline;
         rage::Color32 color;
         rage::Color32 dropColor;
         bool slant;
-        StringParams(float w, float h, int32_t font, int32_t halfFont, int32_t align, bool prop, bool shadow, bool outline, rage::Color32 const& color, rage::Color32 const& dropColor, bool slant = false)
+        StringParams(float w, float h, int32_t font, int32_t halfFont, int32_t align, bool prop, uint8_t shadow, uint8_t outline, rage::Color32 const& color, rage::Color32 const& dropColor, bool slant = false)
             : w(w), h(h), font(font), halfFont(halfFont), align(align), prop(prop), shadow(shadow), outline(outline), color(color), dropColor(dropColor), slant(slant) {
         }
     };
@@ -268,15 +271,15 @@ public:
         if (params.align == 2) {
             for (auto& it : str) {
                 wchar_t c = it - ' ';
-                rect.left -= getCharWidth(c);
-                rect.right -= getCharWidth(c);
+                rect.left -= getCharWidth(c) + (params.outline * 1.0f);
+                rect.right -= getCharWidth(c) + (params.outline * 1.0f);
             }
         }
         else if (params.align == 1) {
             for (auto& it : str) {
                 wchar_t c = it - ' ';
-                rect.left -= getCharWidth(c) / 2;
-                rect.right -= getCharWidth(c) / 2;
+                rect.left -= (getCharWidth(c) / 2) + (params.outline * 1.0f);
+                rect.right -= (getCharWidth(c) / 2) + (params.outline * 1.0f);
             }
         }
 
@@ -299,14 +302,14 @@ public:
 
                 if (params.shadow) {
                     rage::fwRect shad = rect;
-                    shad.Translate(ScaleX(2.0f), ScaleY(2.0f));
+                    shad.Translate(ScaleX(params.shadow * 1.0f), ScaleY(params.shadow * 1.0f));
                     CSprite2d::Draw(shad, uv, params.dropColor);
                 }
 
                 if (params.outline) {
-                    float outlineSize = 1.0f;
+                    float outlineSize = params.outline * 1.0f;
                     constexpr int numOffsets = 16;
-                    float angleStep = outlineSize * 3.14159265359f / numOffsets;
+                    float angleStep = (outlineSize * PI) / numOffsets;
 
                     for (int32_t i = 0; i < numOffsets; i++) {
                         float angle = i * angleStep;
@@ -319,7 +322,7 @@ public:
                 CSprite2d::Draw(rect, uv, params.color);
             }
 
-            float charWidth = getCharWidth(it - ' ');
+            float charWidth = getCharWidth(it - ' ') + (params.outline * 1.0f);
             rect.left += charWidth;
             rect.right += charWidth;
 
@@ -349,7 +352,7 @@ public:
             if (player->m_pPlayerInfo->m_PlayerData.GetWantedLevel() > 5 - i
                 && (CTimer::GetTimeInMilliseconds() > player->m_pPlayerInfo->m_PlayerData.m_Wanted.m_nLastWantedLevelChange + 2000 || FLASH_ITEM(500, 250)))
                 PrintString(elements[HUDELEMENT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_WANTED].x + ((5 - i) * elements[HUDELEMENT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_WANTED].y), GetStringParams(HUDELEMENT_WANTED));
-            else
+            else if (ALWAYS_SHOW_WANTED_STARS || player->m_pPlayerInfo->m_PlayerData.GetWantedLevel() > 0)
                 PrintString(elements[HUDELEMENT_NOT_WANTED].str, SCREEN_WIDTH - ScaleX(elements[HUDELEMENT_NOT_WANTED].x + ((5 - i) * elements[HUDELEMENT_NOT_WANTED].extraX)), ScaleY(elements[HUDELEMENT_NOT_WANTED].y), GetStringParams(HUDELEMENT_NOT_WANTED));
         }
     }
@@ -494,7 +497,7 @@ public:
         auto radioElement = &elements[HUDELEMENT_RADIO_NAME];      
         auto params = GetStringParams(HUDELEMENT_RADIO_NAME);
 
-        if (audRadioStation::ms_CurrRadioStation != audRadioStation::ms_CurrRadioStationRoll) {
+        if (audRadioStation::ms_CurrRadioStation == audRadioStation::ms_CurrRadioStationRoll) {
             radioElement = &elements[HUDELEMENT_RADIO_NAME_ACTIVE];
             params = GetStringParams(HUDELEMENT_RADIO_NAME_ACTIVE);
         }
@@ -723,11 +726,13 @@ public:
 
         {
             bool renderHealth = true;
-            if (timeToFlashHealth > CTimer::GetTimeInMilliseconds())
-                renderHealth = FLASH_ITEM(200, 100);
+            if (BLINK_ON_UPDATE) {
+                if (timeToFlashHealth > CTimer::GetTimeInMilliseconds())
+                    renderHealth = FLASH_ITEM(200, 100);
 
-            if (playa->m_fHealth <= 10.0f)
-                renderHealth = FLASH_ITEM(500, 250);
+                if (playa->m_fHealth <= 10.0f)
+                    renderHealth = FLASH_ITEM(500, 250);
+            }
 
             char buf[32] = { 0 };
             float progress = ((playa->m_fHealth + 0.5f) / playa->m_pPlayerInfo->MaxHealth) * 100.0f;
@@ -757,8 +762,10 @@ public:
             float progress = ((playa->m_fArmour + 0.5f) / playa->m_pPlayerInfo->MaxArmour) * 100.0f;
             if (playa->m_fArmour > 1.0f) {
                 bool renderArmour = true;
-                if (timeToFlashArmour > CTimer::GetTimeInMilliseconds())
-                    renderArmour = FLASH_ITEM(200, 100);
+                if (BLINK_ON_UPDATE) {
+                    if (timeToFlashArmour > CTimer::GetTimeInMilliseconds())
+                        renderArmour = FLASH_ITEM(200, 100);
+                }
 
                 if (renderArmour) {
                     if (RENDER_PROGRESS_BARS) {
@@ -813,14 +820,12 @@ public:
 
         if (!CPlayerInfo::ms_bDisplayingPhone) {
             DrawAreaName();
-            //DrawStreetName();
             DrawVehicleName();
         }
 
         DrawRadioName();
 
         SetScaleMult();
-        //DrawDebugStuff();
     }
 
     static void DrawHud() {
@@ -831,15 +836,12 @@ public:
             TheViewport.m_bWidescreen)
             return;
 
-        if (plugin::scripting::CallCommandById<bool>(plugin::Commands::ARE_WIDESCREEN_BORDERS_ACTIVE))
-            return;
-
         auto base = new T_CB_Generic_NoArgs(DrawHudCB);
         base->Init();
     }
 
     static void DrawRadarBack() {
-        float off = 0.1f;
+        float off = 0.09f;
         CSprite2d::DrawCircle({ 0.5f, 0.5f }, { 0.5f - off, 0.5f - off }, 40, { 5, 5, 5, 225 }, 0.0f);
     }
 
